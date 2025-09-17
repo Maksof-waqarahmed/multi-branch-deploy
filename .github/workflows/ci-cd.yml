@@ -33,14 +33,14 @@ jobs:
         working-directory: ./src
 
       - name: Run Tests
-        run: npm test -- --ci --reporters=default --json --outputFile=./src/test-results/test-report.json
+        run: npm test -- --ci --reporters=default --json --outputFile=./test-results/test-report.json
         working-directory: ./src
 
       - name: Upload Artifact (test-report)
         uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: ./src/test-results/test-report.json
+          path: ./src/test-results/
 
   deploy_qa:
     name: Deploy to QA
