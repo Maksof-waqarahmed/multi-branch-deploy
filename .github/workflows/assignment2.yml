@@ -52,7 +52,7 @@ jobs:
       - name: Run Tests
         run: |
           mkdir -p test-results
-          npx vitest run --reporter=default --reporter=json \
+          npx vitest run --setupFiles=./setupTests.ts --reporter=default --reporter=json \
             > test-results/test-report-${{ matrix.node-version }}.json
 
       - name: Upload test results
