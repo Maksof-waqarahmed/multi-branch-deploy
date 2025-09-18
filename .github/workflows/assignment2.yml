@@ -44,7 +44,7 @@ jobs:
       - name: Run Tests
         run: |
           mkdir -p ./test-results
-          npx vitest run --environment jsdom --reporter=default --reporter=json > ./test-results/test-report-${{ matrix.node-version }}.json
+          npx vitest run --reporter=default --reporter=json > ./test-results/test-report-${{ matrix.node-version }}.json
         working-directory: ./frontend
 
       - name: Upload test results
