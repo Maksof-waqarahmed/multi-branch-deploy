@@ -1,0 +1,177 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip-build:
+        description: 'Skip build step'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+        - 'true'
+        - 'false'
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 2 AM
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on Node.js ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    strategy:
+      matrix:
+        node-version: [16, 18, 20]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests with Vitest (summary)
+      run: |
+        mkdir -p test-results
+        npx vitest run --coverage --reporter=text-summary \
+          > test-results/results-${{ matrix.node-version }}.txt
+      env:
+        CI: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.node-version }}
+        path: frontend/test-results/results-${{ matrix.node-version }}.txt
+        retention-days: 7
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+    - name: Download all test results
+      uses: actions/download-artifact@v4
+      with:
+        path: all-test-results
+        pattern: test-results-*
+        merge-multiple: true
+
+    - name: Generate test summary markdown and attach to Job Summary
+      run: |
+        echo "# Test Results Summary" > test-summary.md
+        echo "Generated on $(date -u)" >> test-summary.md
+        echo "" >> test-summary.md
+        echo "## Combined Text Summaries" >> test-summary.md
+        echo "" >> test-summary.md
+        if ls all-test-results/results-*.txt 1> /dev/null 2>&1; then
+          cat all-test-results/results-*.txt >> test-summary.md
+        else
+          echo "(No results files found)" >> test-summary.md
+        fi
+        # Also add to the GitHub Job Summary
+        echo "# Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        if ls all-test-results/results-*.txt 1> /dev/null 2>&1; then
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat all-test-results/results-*.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "(No results files found)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Upload test summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-summary
+        path: test-summary.md
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    if: |
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      needs.test.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs['skip-build'] == 'false')
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build project
+      run: |
+        npm run build
+        # Optionally add a build info file for demonstration
+        echo "Build timestamp: $(date -u)" > dist/build-info.txt
+
+    - name: List build contents
+      run: ls -la dist/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: frontend/dist/
+        retention-days: 30
+
+  approval:
+    name: Manual Approval
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && needs.build.result == 'success'
+    steps:
+    - name: Wait for manual approval (simulated)
+      run: |
+        echo "Manual approval required before publishing"
+        echo "Simulating approval for workflow: ${{ github.workflow }}"
+        sleep 5
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs: approval
+    if: github.ref == 'refs/heads/main' && needs.approval.result == 'success'
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist/
+
+    - name: Display build contents
+      run: ls -la dist/
+
+    - name: Simulate publishing
+      run: |
+        echo "🚀 Publishing application"
+        echo "📦 Build contents:"
+        if [ -f dist/build-info.txt ]; then cat dist/build-info.txt; fi
+        echo "✅ Publishing completed successfully!"
