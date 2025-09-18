@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [16, 18, 20]
+        node: [18, 20] # removed 16 because project requires Node >=18
     steps:
       - uses: actions/checkout@v4
 
@@ -33,17 +33,17 @@ jobs:
         working-directory: ./frontend
 
       - name: Prepare Test Results Folder
-        run: mkdir -p test-results
+        run: mkdir -p frontend/test-results
 
       - name: Run Tests
-        run: npx vitest run --reporter=json > ../../test-results/test-${{ matrix.node }}.json
+        run: npx vitest run --reporter=json > frontend/test-results/test-${{ matrix.node }}.json
         working-directory: ./frontend
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.node }}
-          path: test-results/test-${{ matrix.node }}.json
+          path: frontend/test-results/test-${{ matrix.node }}.json
 
   build:
     name: Build React App
