@@ -14,7 +14,7 @@ on:
         required: false
         default: "false"
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * *" # Daily at midnight UTC
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -25,6 +25,7 @@ jobs:
     name: Matrix Testing (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node-version: [16, 18, 20]
 
@@ -38,7 +39,7 @@ jobs:
           cache-dependency-path: ./frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         working-directory: ./frontend
 
       - name: Run Tests
@@ -63,11 +64,13 @@ jobs:
           path: ./all-results
 
       - name: Merge reports and count tests
+        id: merge
         run: |
           jq -s '[.[]]' ./all-results/**/test-report-*.json > merged-report.json
           total_tests=$(jq '[.[].numTotalTests] | add' merged-report.json)
           echo "total_tests=$total_tests" >> $GITHUB_ENV
-          echo "Total Tests Run: $total_tests"
+          echo "total_tests=$total_tests" >> $GITHUB_OUTPUT
+          echo "✅ Total Tests Run: $total_tests"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -82,24 +85,24 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: merged-report
-          path: ./prev-report
-        continue-on-error: true
+          path: ./current-report
 
       - name: Compare test counts
         run: |
-          current=${{ env.total_tests }}
+          current=$(jq '[.[].numTotalTests] | add' ./current-report/merged-report.json)
           echo "Current tests: $current"
 
+          # Optionally save last report in artifacts or repo if you want history
           if [ -f ./prev-report/merged-report.json ]; then
             prev=$(jq '[.[].numTotalTests] | add' ./prev-report/merged-report.json)
             echo "Previous tests: $prev"
 
             if [ "$current" -lt "$prev" ]; then
-              echo "Test count decreased! Failing build."
+              echo "❌ Test count decreased! Failing build."
               exit 1
             fi
           else
-            echo "No previous report found, skipping comparison."
+            echo "ℹ️ No previous report found, skipping comparison."
           fi
 
   build:
@@ -120,7 +123,7 @@ jobs:
           cache-dependency-path: ./frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         working-directory: ./frontend
 
       - name: Build project
