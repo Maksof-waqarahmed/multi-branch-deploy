@@ -1,10 +1,10 @@
-name: Matrix Testing & Conditional Build
+name: Matrix Testing & Conditional Build + Email Notification
 
 on:
   push:
     branches: [main]
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -13,8 +13,6 @@ on:
         description: "Skip build step?"
         required: false
         default: "false"
-  schedule:
-    - cron: "0 0 * * *" # Daily at midnight UTC
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -29,6 +27,10 @@ jobs:
       matrix:
         node-version: [16, 18, 20]
 
+    defaults:
+      run:
+        working-directory: ./frontend
+
     steps:
       - uses: actions/checkout@v4
 
@@ -40,14 +42,19 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        working-directory: ./frontend
+
+      # Polyfill crypto for Node 16
+      - name: Polyfill Node 16 crypto
+        if: ${{ matrix.node-version == 16 }}
+        run: |
+          echo "import { webcrypto } from 'node:crypto'; if (!globalThis.crypto) globalThis.crypto = webcrypto;" > vitest.setup.js
 
       - name: Run Tests
         run: |
-          mkdir -p ./test-results
-          NODE_OPTIONS="--experimental-global-webcrypto" \
-          npx vitest run --reporter=default --reporter=json > ./test-results/test-report-${{ matrix.node-version }}.json
-        working-directory: ./frontend
+          mkdir -p test-results
+          npx vitest run --reporter=default --reporter=json \
+            --setup-files=vitest.setup.js \
+            > test-results/test-report-${{ matrix.node-version }}.json
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -55,7 +62,7 @@ jobs:
           name: test-report-${{ matrix.node-version }}
           path: ./frontend/test-results/
 
-  summary:
+  summarize-tests:
     name: Summarize Test Reports
     runs-on: ubuntu-latest
     needs: test
@@ -64,55 +71,56 @@ jobs:
         with:
           path: ./all-results
 
-      - name: Merge reports and count tests
+      - name: Merge JSON reports & count tests
         id: merge
         run: |
           jq -s '[.[]]' ./all-results/**/test-report-*.json > merged-report.json
           total_tests=$(jq '[.[].numTotalTests] | add' merged-report.json)
+          echo "✅ Total Tests Run: $total_tests"
           echo "total_tests=$total_tests" >> $GITHUB_ENV
           echo "total_tests=$total_tests" >> $GITHUB_OUTPUT
-          echo "✅ Total Tests Run: $total_tests"
 
       - uses: actions/upload-artifact@v4
         with:
           name: merged-report
           path: merged-report.json
 
-  check_tests:
-    name: Ensure Tests Did Not Decrease
+  check-tests:
+    name: Fail if test count decreased
     runs-on: ubuntu-latest
-    needs: summary
+    needs: summarize-tests
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: merged-report
           path: ./current-report
 
-      - name: Compare test counts
+      - name: Compare previous & current tests
         run: |
           current=$(jq '[.[].numTotalTests] | add' ./current-report/merged-report.json)
           echo "Current tests: $current"
 
-          # Optionally save last report in artifacts or repo if you want history
           if [ -f ./prev-report/merged-report.json ]; then
             prev=$(jq '[.[].numTotalTests] | add' ./prev-report/merged-report.json)
             echo "Previous tests: $prev"
-
             if [ "$current" -lt "$prev" ]; then
               echo "❌ Test count decreased! Failing build."
               exit 1
             fi
           else
-            echo "ℹ️ No previous report found, skipping comparison."
-          fi
+            echo "ℹ️ No previous report found. Skipping comparison."
 
   build:
-    name: Build Project
+    name: Build Frontend
     runs-on: ubuntu-latest
-    needs: [test, summary, check_tests]
+    needs: [test, summarize-tests, check-tests]
     if: >
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-      && github.event.inputs.skip-build != 'true'
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      github.event.inputs.skip-build != 'true'
+
+    defaults:
+      run:
+        working-directory: ./frontend
 
     steps:
       - uses: actions/checkout@v4
@@ -125,14 +133,37 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        working-directory: ./frontend
 
       - name: Build project
         run: npm run build
-        working-directory: ./frontend
 
-      - name: Upload build output
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-dist
           path: ./frontend/dist/
+
+  notify-email:
+    name: Send Email Notification
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Send Deployment Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "Production Deployment Successful"
+          to: "waqarahmed7861234@gmail.com"
+          from: "waqarahmed7861234@gmail.com"
+          body: |
+            Hello Waqar,
+
+            The Production deployment has been completed successfully.
+
+            Branch: main
+            Commit: ${{ github.sha }}
+            Time: ${{ github.event.head_commit.timestamp }}
