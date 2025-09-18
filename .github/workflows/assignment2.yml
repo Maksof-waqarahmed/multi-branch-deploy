@@ -1,73 +1,159 @@
-name: Node Matrix Testing & Build
+name: Matrix Testing & Conditional Build
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     tags:
       - 'v*.*.*'
   pull_request:
-  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # nightly run
+    - cron: "0 3 * * *" # nightly at 3 AM UTC
+  workflow_dispatch:
+    inputs:
+      direct_deploy:
+        description: "Directly deploy to GH Pages using build-archive branch?"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  test:
-    name: Test Node ${{ matrix.node }}
+  # Nightly test (only for scheduled runs)
+  Nightly-Nodejs-Test:
+    name: Nightly 3AM UTC Test
+    if: ${{ github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [18, 20] # removed 16 because project requires Node >=18
+    defaults:
+      run:
+        working-directory: ./frontend
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: ./frontend/package-lock.json
-
-      - name: Install Dependencies
-        run: npm install
-        working-directory: ./frontend
-
-      - name: Prepare Test Results Folder
-        run: mkdir -p frontend/test-results
-
-      - name: Run Tests
-        run: npx vitest run --reporter=json > frontend/test-results/test-${{ matrix.node }}.json
-        working-directory: ./frontend
-
-      - name: Upload Test Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.node }}
-          path: frontend/test-results/test-${{ matrix.node }}.json
-
-  build:
-    name: Build React App
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install Dependencies
-        run: npm install
-        working-directory: ./frontend
-
-      - name: Build App
-        run: npm run build
-        working-directory: ./frontend
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
+      - run: npm ci
+      - name: Run Vitest with coverage
+        run: |
+          mkdir -p test-results
+          npx vitest run --coverage --reporter=text-summary \
+            > test-results/nightly-test-result.txt
+      - uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
-          path: frontend/dist
+          name: nightly-test-results
+          path: frontend/test-results/nightly-test-result.txt
+
+  # Matrix testing for PRs and pushes
+  Run-Matrix-Test:
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.direct_deploy != 'true' || github.event_name != 'schedule' }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ./frontend
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: [18, 20] # Node >=18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci
+      - name: Run Vitest with coverage
+        run: |
+          mkdir -p test-results
+          npx vitest run --coverage --reporter=text-summary \
+            > test-results/results-${{ matrix.os }}-${{ matrix.node-version }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.node-version }}
+          path: frontend/test-results/results-${{ matrix.os }}-${{ matrix.node-version }}.txt
+
+  # Combine coverage and enforce threshold
+  Test-Coverage-Report:
+    runs-on: ubuntu-latest
+    needs: Run-Matrix-Test
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: test-results
+      - name: Aggregate coverage
+        id: coverage
+        run: |
+          line_values=$(grep "Lines" test-results/*/results-*.txt | awk '{print $2}' | tr -d '%')
+          statement_values=$(grep "Statements" test-results/*/results-*.txt | awk '{print $2}' | tr -d '%')
+          func_values=$(grep "Functions" test-results/*/results-*.txt | awk '{print $2}' | tr -d '%')
+          branch_values=$(grep "Branches" test-results/*/results-*.txt | awk '{print $2}' | tr -d '%')
+          avg() { sum=0; count=0; for v in $@; do sum=$((sum+v)); count=$((count+1)); done; [ $count -eq 0 ] && echo 0 || echo $((sum/count)); }
+          coverage=$(( ( $(avg $line_values) + $(avg $statement_values) + $(avg $func_values) + $(avg $branch_values) ) / 4 ))
+          echo "coverage=$coverage" >> $GITHUB_OUTPUT
+          echo "Coverage summary: $coverage%"
+      - name: Fail if coverage < 70
+        run: |
+          if [ "${{ steps.coverage.outputs.coverage }}" -lt 70 ]; then
+            echo "❌ Coverage too low"
+            exit 1
+          else
+            echo "✅ Coverage OK"
+          fi
+
+  # Build step
+  Build:
+    runs-on: ubuntu-latest
+    needs: Test-Coverage-Report
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: mkdir -p dist && echo "Build complete" > dist/build.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-dist
+          path: frontend/dist/
+
+  # Optional: save build to branch
+  Save-Build-To-Branch:
+    runs-on: ubuntu-latest
+    needs: Build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          git push origin --delete build-archive || true
+          git checkout --orphan build-archive
+          git reset --hard
+          git clean -fdx
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-dist
+          path: ./dist
+      - run: |
+          git add dist
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Build archive for $GITHUB_SHA"
+          git push origin build-archive --force
+
+  # Optional: deploy to GitHub Pages
+  Deploy-to-GH-Pages:
+    runs-on: ubuntu-latest
+    needs: Save-Build-To-Branch
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: build-archive
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+      - uses: actions/deploy-pages@v4
