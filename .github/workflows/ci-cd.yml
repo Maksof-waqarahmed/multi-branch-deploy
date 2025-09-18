@@ -68,7 +68,7 @@ jobs:
       if: matrix.node-version == '20'
       run: |
         mkdir -p test-results
-        npx vitest run --coverage --reporter=text-summary \
+        npx vitest run --coverage --coverage.reporter=text-summary \
           > test-results/results-${{ matrix.node-version }}.txt
       env:
         CI: true
