@@ -203,3 +203,22 @@ jobs:
         echo "📦 Build contents:"
         if [ -f dist/build-info.txt ]; then cat dist/build-info.txt; fi
         echo "✅ Publishing completed successfully!"
+
+    - name: Send Email Notification
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 465
+        username: ${{ secrets.SMTP_USERNAME }}
+        password: ${{ secrets.SMTP_PASSWORD }}
+        subject: "Production Deployment Successful"
+        to: "waqarahmed7861234@gmail.com"
+        from: "waqarahmed7861234@gmail.com"
+        body: |
+          Hello Waqar,
+          
+          The Production deployment has been completed successfully.
+          
+          Branch: main
+          Time: ${{ github.event.head_commit.timestamp }}
+          Commit: ${{ github.sha }}
