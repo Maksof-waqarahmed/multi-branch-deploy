@@ -41,11 +41,10 @@ jobs:
         run: npm install
         working-directory: ./frontend
 
-      - name: Run tests and save report
+      - name: Run Tests
         run: |
           mkdir -p ./test-results
-          npm test -- --ci --reporters=default \
-            --json --outputFile=./test-results/test-report-${{ matrix.node-version }}.json
+          npx vitest run --environment jsdom --reporter=default --reporter=json > ./test-results/test-report-${{ matrix.node-version }}.json
         working-directory: ./frontend
 
       - name: Upload test results
