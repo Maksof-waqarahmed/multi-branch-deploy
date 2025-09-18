@@ -1,14 +1,7 @@
 import '@testing-library/jest-dom';
+import { webcrypto } from 'crypto';
 
-try {
-  if (!globalThis.crypto) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { webcrypto } = require('crypto');
-    globalThis.crypto = webcrypto;
-  }
-} catch (err: any) {
-  // fallback for Node < 18
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const crypto = require('crypto-browserify');
-  globalThis.crypto = crypto;
+// Polyfill crypto for Node < 20
+if (!globalThis.crypto) {
+  globalThis.crypto = webcrypto as unknown as Crypto;
 }
