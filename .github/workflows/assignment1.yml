@@ -11,7 +11,7 @@ on:
 
 jobs:
   ci:
-    name: CI - Lint & Test
+    name: CI with Lint & Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -60,7 +60,7 @@ jobs:
           path: ./qa-artifacts/
 
       - name: Simulate QA Deployment
-        run: echo "🚀 Deploying QA environment with test artifacts..."
+        run: echo "Deploying QA environment with test artifacts by Waqar Rana"
 
   deploy_prod:
     name: Deploy to Production
@@ -78,7 +78,7 @@ jobs:
           path: ./prod-artifacts/
 
       - name: Simulate Production Deployment
-        run: echo "🚀 Deploying Production environment with test artifacts..."
+        run: echo "Deploying Production environment with test artifacts by Waqar Rana"
 
       - name: Send Email Notification
         uses: dawidd6/action-send-mail@v3
@@ -87,13 +87,13 @@ jobs:
           server_port: 465
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "✅ Production Deployment Successful"
+          subject: "Production Deployment Successful"
           to: "waqarahmed7861234@gmail.com"
           from: "waqarahmed7861234@gmail.com"
           body: |
             Hello Waqar,
             
-            The Production deployment has been completed successfully. 🚀
+            The Production deployment has been completed successfully.
           
             Branch: main
             Time: ${{ github.event.head_commit.timestamp }}
