@@ -45,6 +45,7 @@ jobs:
       - name: Run Tests
         run: |
           mkdir -p ./test-results
+          NODE_OPTIONS="--experimental-global-webcrypto" \
           npx vitest run --reporter=default --reporter=json > ./test-results/test-report-${{ matrix.node-version }}.json
         working-directory: ./frontend
 
