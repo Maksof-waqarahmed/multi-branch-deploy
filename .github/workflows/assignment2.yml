@@ -1,168 +1,72 @@
-name: Matrix Testing & Conditional Build + Email Notification
+name: Node Matrix Testing & Build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   pull_request:
-    branches: [main]
   workflow_dispatch:
-    inputs:
-      skip-build:
-        description: "Skip build step?"
-        required: false
-        default: "false"
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  schedule:           # Optional nightly test
+    - cron: '0 0 * * *'
 
 jobs:
   test:
-    name: Matrix Testing (Node ${{ matrix.node-version }})
+    name: Test Node ${{ matrix.node }}
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
-        node-version: [16, 18, 20]
-
-    defaults:
-      run:
-        working-directory: ./frontend
-
+        node: [16, 18, 20]  # Matrix Node versions
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: ./frontend/package-lock.json
+          node-version: ${{ matrix.node }}
 
-      - name: Install dependencies
-        run: npm ci
-
-      # Polyfill crypto for Node 16
-      - name: Polyfill Node 16 crypto
-        if: ${{ matrix.node-version == 16 }}
+      - name: Install Dependencies
         run: |
-          echo "import { webcrypto } from 'node:crypto'; if (!globalThis.crypto) globalThis.crypto = webcrypto;" > vitest.setup.js
+          cd frontend
+          npm install
 
       - name: Run Tests
         run: |
-          mkdir -p test-results
-          npx vitest run --setupFiles=./setupTests.ts --reporter=default --reporter=json \
-            > test-results/test-report-${{ matrix.node-version }}.json
+          cd frontend
+          npm test -- --watchAll=false --json --outputFile=../../test-results/test-${{ matrix.node }}.json
 
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v3
         with:
-          name: test-report-${{ matrix.node-version }}
-          path: ./frontend/test-results/
-
-  summarize-tests:
-    name: Summarize Test Reports
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: ./all-results
-
-      - name: Merge JSON reports & count tests
-        id: merge
-        run: |
-          jq -s '[.[]]' ./all-results/**/test-report-*.json > merged-report.json
-          total_tests=$(jq '[.[].numTotalTests] | add' merged-report.json)
-          echo "✅ Total Tests Run: $total_tests"
-          echo "total_tests=$total_tests" >> $GITHUB_ENV
-          echo "total_tests=$total_tests" >> $GITHUB_OUTPUT
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: merged-report
-          path: merged-report.json
-
-  check-tests:
-    name: Fail if test count decreased
-    runs-on: ubuntu-latest
-    needs: summarize-tests
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: merged-report
-          path: ./current-report
-
-      - name: Compare previous & current tests
-        run: |
-          current=$(jq '[.[].numTotalTests] | add' ./current-report/merged-report.json)
-          echo "Current tests: $current"
-
-          if [ -f ./prev-report/merged-report.json ]; then
-            prev=$(jq '[.[].numTotalTests] | add' ./prev-report/merged-report.json)
-            echo "Previous tests: $prev"
-            if [ "$current" -lt "$prev" ]; then
-              echo "❌ Test count decreased! Failing build."
-              exit 1
-            fi
-          else
-            echo "ℹ️ No previous report found. Skipping comparison."
+          name: test-results-${{ matrix.node }}
+          path: test-results/test-${{ matrix.node }}.json
 
   build:
-    name: Build Frontend
+    name: Build React App
     runs-on: ubuntu-latest
-    needs: [test, summarize-tests, check-tests]
-    if: >
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
-      github.event.inputs.skip-build != 'true'
-
-    defaults:
-      run:
-        working-directory: ./frontend
-
+    needs: test
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: ./frontend/package-lock.json
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install Dependencies
+        run: |
+          cd frontend
+          npm install
 
-      - name: Build project
-        run: npm run build
+      - name: Build App
+        run: |
+          cd frontend
+          npm run build
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v3
         with:
-          name: build-dist
-          path: ./frontend/dist/
-
-  notify-email:
-    name: Send Email Notification
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Send Deployment Email
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "Production Deployment Successful"
-          to: "waqarahmed7861234@gmail.com"
-          from: "waqarahmed7861234@gmail.com"
-          body: |
-            Hello Waqar,
-
-            The Production deployment has been completed successfully.
-
-            Branch: main
-            Commit: ${{ github.sha }}
-            Time: ${{ github.event.head_commit.timestamp }}
+          name: build-artifacts
+          path: frontend/dist
