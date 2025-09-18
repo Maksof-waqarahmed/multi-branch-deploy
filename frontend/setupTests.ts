@@ -1,7 +1,9 @@
 import '@testing-library/jest-dom';
-import { webcrypto } from 'node:crypto';
 
-// Only assign if missing
+// Use proper DOM-compatible crypto polyfill
+import { Crypto } from '@peculiar/webcrypto';
+
 if (!globalThis.crypto) {
-    globalThis.crypto = webcrypto as unknown as Crypto;
+  // Safe assignment for jsdom
+  globalThis.crypto = new Crypto() as unknown as Crypto;
 }
